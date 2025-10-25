@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>React + Flask Demo</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 20px; }
+      #root { max-width: 720px; margin: 0 auto; }
+      button { padding: 8px 12px; }
+      pre { background:#f6f6f6; padding:12px; border-radius:6px; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <!-- React (UMD) from CDN for minimal setup -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+
+    <!-- Our small app (no build step required) -->
+    <script src="./app.js"></script>
+  </body>
+</html>
