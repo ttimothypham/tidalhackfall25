@@ -5,11 +5,10 @@ import joblib
 import numpy as np
 import re
 from fractions import Fraction
-from utils import load_data
-from typing import Dict
+import os
+from src.utils import load_data, estimate_servings, classify_recipe_type, parse_ingredient_quantities
 
-def train_model(df, output_model_path='model.pkl'):
-    """Train a TF-IDF model on cleaned recipes for ingredient matching."""
+def train_model(df, output_model_path=os.path.join('model.pkl')):
     df['ingredient_string'] = df['NER'].apply(lambda x: ' '.join(eval(x) if isinstance(x, str) else x))
     vectorizer = TfidfVectorizer(lowercase=True, stop_words='english')
     ingredient_vectors = vectorizer.fit_transform(df['ingredient_string'])
@@ -21,13 +20,10 @@ def train_model(df, output_model_path='model.pkl'):
     print(f"Model saved to {output_model_path}")
     return vectorizer, ingredient_vectors, df
 
-def is_cheap_mass_producible(recipe):
-    """Check if recipe is a soup, stew, or casserole."""
-    preferred_types = ['soup', 'stew', 'casserole']
-    return recipe['recipe_type'] in preferred_types
+def is_cheap_mass_producible(recipe_type: str) -> bool:
+    return recipe_type in ['soup', 'stew', 'casserole']
 
-def has_high_end_ingredients(ingredients):
-    """Check for high-end ingredients to exclude."""
+def has_high_end_ingredients(ingredients: List[str]) -> bool:
     high_end_keywords = [
         'steak', 'lobster', 'shrimp', 'salmon', 'tuna', 'crab', 'oyster', 'caviar',
         'truffle', 'foie gras', 'saffron', 'filet mignon', 'veal', 'lamb', 'duck'
@@ -35,8 +31,7 @@ def has_high_end_ingredients(ingredients):
     return any(keyword in ' '.join(ingredients).lower() for keyword in high_end_keywords)
 
 def scale_quantities(quantities: Dict[str, str], original_servings: int, target_servings: int) -> Dict[str, str]:
-    """Scale ingredient quantities based on servings."""
-    if original_servings < 2:  # Ensure valid servings
+    if original_servings < 2:
         original_servings = 2
     scale_factor = target_servings / original_servings
     scaled_quantities = {}
@@ -55,8 +50,7 @@ def scale_quantities(quantities: Dict[str, str], original_servings: int, target_
             scaled_quantities[ingr] = qty
     return scaled_quantities
 
-def suggest_recipe(input_ingredients, target_servings=10, model_path='model.pkl', top_n=3):
-    """Suggest a recipe, prioritizing soups/stews/casseroles, scaling quantities."""
+def suggest_recipe(input_ingredients: List[str], target_servings: int = 10, model_path: str = os.path.join('model.pkl'), top_n: int = 3):
     input_cleaned = [re.sub(r'[^a-zA-Z\s]', '', ingr.lower().strip()) for ingr in input_ingredients]
     input_string = ' '.join(input_cleaned)
     
@@ -73,9 +67,10 @@ def suggest_recipe(input_ingredients, target_servings=10, model_path='model.pkl'
     for idx in recipe_indices:
         recipe = recipes.iloc[idx]
         ingredients = eval(recipe['NER']) if isinstance(recipe['NER'], str) else recipe['NER']
-        if not has_high_end_ingredients(ingredients):
+        recipe_type = classify_recipe_type(recipe['title'], eval(recipe['directions']) if isinstance(recipe['directions'], str) else recipe['directions'])
+        if not has_high_end_ingredients(ingredients) and not any(allergen in ' '.join(ingredients).lower() for allergen in ['milk', 'peanuts', 'sugar']):
             score = similarities[0][idx]
-            boosted_score = score * 1.5 if is_cheap_mass_producible(recipe) else score
+            boosted_score = score * 1.5 if is_cheap_mass_producible(recipe_type) else score
             selected_recipes.append((idx, boosted_score))
         if len(selected_recipes) >= top_n:
             break
@@ -85,24 +80,26 @@ def suggest_recipe(input_ingredients, target_servings=10, model_path='model.pkl'
     
     best_idx, _ = max(selected_recipes, key=lambda x: x[1])
     recipe = recipes.iloc[best_idx]
-    quantities = eval(recipe['ingredient_quantities']) if isinstance(recipe['ingredient_quantities'], str) else recipe['ingredient_quantities']
-    scaled_quantities = scale_quantities(quantities, recipe['servings'], target_servings)
+    structured_ings = eval(recipe['structured_ingredients']) if isinstance(recipe['structured_ingredients'], str) else recipe['structured_ingredients']
+    quantities = parse_ingredient_quantities(structured_ings)
+    servings = estimate_servings(structured_ings)
+    scaled_quantities = scale_quantities(quantities, servings, target_servings)
     
     return {
         'name': recipe['title'],
         'ingredients': eval(recipe['NER']) if isinstance(recipe['NER'], str) else recipe['NER'],
         'scaled_quantities': scaled_quantities,
-        'directions': recipe['instructions'],
+        'directions': eval(recipe['directions']) if isinstance(recipe['directions'], str) else recipe['directions'],
         'serves': target_servings,
-        'original_servings': recipe['servings'],
-        'recipe_type': recipe['recipe_type'],
-        'high_protein': recipe['high_protein'],
+        'original_servings': servings,
+        'recipe_type': classify_recipe_type(recipe['title'], eval(recipe['directions']) if isinstance(recipe['directions'], str) else recipe['directions']),
+        'total_time_minutes': recipe['total_time_minutes'],
+        'cooking_temp_f': recipe['cooking_temp_f'],
         'confidence': float(similarities[0][best_idx])
     }
 
-def suggest_recipe_from_inventory(inventory_id, target_servings=10, model_path='model.pkl', inventory_path='data/mock_inventories.csv'):
-    """Suggest a recipe based on inventory ID, scaling quantities."""
-    inventory_df = load_data(inventory_path)
+def suggest_recipe_from_inventory(inventory_id: int, target_servings: int = 10, model_path: str = os.path.join('model.pkl'), inventory_path: str = os.path.join('data', 'mock_inventories.csv')):
+    inventory_df = load_data(inventory_path, tier=None)
     try:
         input_ingredients = eval(inventory_df[inventory_df['inventory_id'] == inventory_id]['ingredients'].iloc[0])
         return suggest_recipe(input_ingredients, target_servings, model_path)

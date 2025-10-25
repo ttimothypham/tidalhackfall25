@@ -3,25 +3,23 @@ from dataclasses import dataclass
 import pandas as pd
 import re
 import logging
+import os
 
-# Data models shared across modules
 @dataclass
 class Recipe:
-    id: str
     title: str
     ingredients: List[str]
-    instructions: str
-    prep_time: Optional[int]
-    cook_time: Optional[int]
-    servings: int  # Non-optional
-    category: Optional[str]
-    recipe_type: Optional['RecipeType']
-    nutrition_info: Optional[Dict[str, bool]]
+    instructions: List[str]
+    servings: int
+    recipe_type: str
+    structured_ingredients: List[Dict]
+    total_time_minutes: Optional[float]
+    cooking_temp_f: Optional[float]
+    tier: int
 
 @dataclass
 class RecipeType:
     is_savory: bool
-    is_sweet: bool
     meal_category: str
     confidence_score: float
 
@@ -37,7 +35,6 @@ class FilterStats:
 class ClassificationStats:
     total_recipes: int
     savory_recipes: int
-    sweet_recipes: int
     unclassified_recipes: int
     meal_category_breakdown: Dict[str, int]
 
@@ -54,9 +51,9 @@ class ProcessingLogger:
         self.warnings = []
         self.info = []
 
-    def log_error(self, error_type: str, details: str, recipe_id: Optional[str] = None):
-        self.errors.append({'type': error_type, 'details': details, 'recipe_id': recipe_id})
-        logging.error(f"{error_type}: {details} (Recipe ID: {recipe_id})")
+    def log_error(self, error_type: str, details: str, recipe_title: Optional[str] = None):
+        self.errors.append({'type': error_type, 'details': details, 'recipe_title': recipe_title})
+        logging.error(f"{error_type}: {details} (Recipe: {recipe_title})")
 
     def log_warning(self, warning_type: str, details: str):
         self.warnings.append({'type': warning_type, 'details': details})
@@ -69,84 +66,90 @@ class ProcessingLogger:
     def generate_error_report(self) -> ErrorReport:
         return ErrorReport(errors=self.errors, warnings=self.warnings, info=self.info)
 
-def load_data(path: str) -> pd.DataFrame:
-    """Load CSV with error handling."""
+def load_data(path: str, tier: int = 1) -> pd.DataFrame:
     try:
-        return pd.read_csv(path)
+        df = pd.read_csv(path)
+        df = df[df['tier'] == tier].reset_index(drop=True)
+        if df.empty:
+            logger = ProcessingLogger()
+            logger.log_error("Data Load Error", f"No tier {tier} recipes found in {path}")
+        return df
     except Exception as e:
         logger = ProcessingLogger()
         logger.log_error("File I/O Error", f"Failed to load {path}: {e}")
         return None
 
 def validate_recipe(recipe: Recipe) -> Optional[List[str]]:
-    """Validate recipe data integrity."""
     errors = []
     if not recipe.title:
         errors.append("Missing title")
     if not recipe.ingredients or len(recipe.ingredients) == 0:
         errors.append("No ingredients")
-    if not recipe.instructions:
-        errors.append("No instructions")
+    if not recipe.instructions or all(not step for step in recipe.instructions):
+        errors.append("No valid instructions")
     if recipe.servings < 2:
         errors.append(f"Invalid servings: {recipe.servings} (must be >= 2)")
+    if any(allergen in ' '.join(recipe.ingredients).lower() for allergen in ['milk', 'peanuts', 'sugar']):
+        errors.append("Allergens detected")
     return errors if errors else None
 
-def parse_ingredient_quantities(ingredient_list: List[str]) -> Dict[str, str]:
-    """Parse quantities from ingredients (e.g., '1 c. brown sugar' -> {brown sugar: 1 cup})."""
-    try:
-        quantities = {}
-        for ingr in ingredient_list:
-            match = re.match(r'(\d+\s*/?\s*\d*\s*(?:c\.|cup|tsp\.|tbsp\.|oz\.|pound|lb\.|teaspoon|tablespoon)?)\s*(.*)', ingr)
-            if match:
-                quantity, name = match.groups()
-                quantities[name.strip().lower()] = quantity.strip()
-            else:
-                quantities[ingr.strip().lower()] = "unknown"
-        return quantities
-    except:
-        return {}
+def parse_ingredient_quantities(ingredient_list: List[Dict]) -> Dict[str, str]:
+    quantities = {}
+    for ingr in ingredient_list:
+        name = ingr['ingredient'].strip().lower()
+        qty = ingr.get('raw_amount', 'unknown')
+        unit = ingr.get('unit', '')
+        quantities[name] = f"{qty} {unit}".strip() if qty != 'unknown' else 'unknown'
+    return quantities
 
-def estimate_servings(quantities: Dict[str, str], ingredients: List[str]) -> int:
-    """Estimate servings based on ingredient quantities, with fallback."""
+def estimate_servings(structured_ingredients: List[Dict]) -> int:
     total_units = 0
     measurable_quantities = 0
-    for quantity in quantities.values():
+    for ingr in structured_ingredients:
         try:
-            if 'cup' in quantity or 'c.' in quantity:
-                num = float(re.findall(r'(\d+\.?\d*/?\d*)\s*(?:c\.|cup)', quantity)[0].replace('/', '.'))
+            qty = ingr.get('raw_amount')
+            unit = ingr.get('unit', '')
+            if not qty or qty == 'unknown':
+                continue
+            num = float(re.sub(r'[^0-9/]', '', qty).replace('/', '.')) if '/' in qty else float(qty)
+            if unit and ('cup' in unit or 'c.' in unit):
                 total_units += num
                 measurable_quantities += 1
-            elif 'tablespoon' in quantity or 'tbsp.' in quantity:
-                num = float(re.findall(r'(\d+\.?\d*/?\d*)\s*(?:tbsp\.|tablespoon)', quantity)[0].replace('/', '.'))
+            elif unit and ('tablespoon' in unit or 'tbsp.' in unit):
                 total_units += num / 16
                 measurable_quantities += 1
-            elif 'teaspoon' in quantity or 'tsp.' in quantity:
-                num = float(re.findall(r'(\d+\.?\d*/?\d*)\s*(?:tsp\.|teaspoon)', quantity)[0].replace('/', '.'))
+            elif unit and ('teaspoon' in unit or 'tsp.' in unit):
                 total_units += num / 48
                 measurable_quantities += 1
-            elif 'pound' in quantity or 'lb.' in quantity:
-                num = float(re.findall(r'(\d+\.?\d*/?\d*)\s*(?:pound|lb\.)', quantity)[0].replace('/', '.'))
-                total_units += num * 2  # 1 pound ~ 2 cups
+            elif unit and ('pound' in unit or 'lb.' in unit):
+                total_units += num * 2
                 measurable_quantities += 1
-            elif 'oz.' in quantity:
-                num = float(re.findall(r'(\d+\.?\d*/?\d*)\s*oz\.', quantity)[0].replace('/', '.'))
-                total_units += num / 8  # 1 oz ~ 1/8 cup
+            elif unit and 'oz.' in unit:
+                total_units += num / 8
                 measurable_quantities += 1
         except:
             continue
     
     if measurable_quantities > 0:
-        servings = max(2, int(total_units * 2))  # ~1 cup = 2 servings
+        servings = max(2, int(total_units * 2))
     else:
-        num_ingredients = len(ingredients)
-        servings = max(2, min(4, num_ingredients))  # Fallback: 2-4 servings
+        num_ingredients = len(structured_ingredients)
+        servings = max(2, min(4, num_ingredients))
         logger = ProcessingLogger()
         logger.log_warning("Serving estimation", f"Using fallback for servings: {servings} (based on {num_ingredients} ingredients)")
     
     return servings
 
-def extract_unique_ingredients(input_path: str = "data/processed/processed_data.csv", output_path: str = "data/processed/unique_ingredients.csv") -> List[str]:
-    """Extract unique ingredients from NER column in processed_data.csv."""
+def classify_recipe_type(title: str, directions: List[str]) -> str:
+    text = (title + ' ' + ' '.join(directions)).lower()
+    if any(keyword in text for keyword in ['soup', 'stew']):
+        return 'soup' if 'soup' in text else 'stew'
+    elif 'casserole' in text or 'bake' in text:
+        return 'casserole'
+    return 'unknown'
+
+def extract_unique_ingredients(input_path: str = os.path.join('data', 'processed', 'processed_data.csv'), 
+                              output_path: str = os.path.join('data', 'processed', 'unique_ingredients.csv')) -> List[str]:
     df = load_data(input_path)
     if df is None:
         return []
@@ -155,7 +158,7 @@ def extract_unique_ingredients(input_path: str = "data/processed/processed_data.
     for ner in df['NER']:
         try:
             ingr_list = eval(ner) if isinstance(ner, str) else ner
-            unique_ingredients.update(ingr.strip().lower() for ingr in ingr_list)
+            unique_ingredients.update(ingr.strip().lower() for ingr in ingr_list if ingr and not any(allergen in ingr.lower() for allergen in ['milk', 'peanuts', 'sugar']))
         except Exception as e:
             logger = ProcessingLogger()
             logger.log_error("Parsing error", f"Failed to parse NER: {e}")
@@ -167,25 +170,35 @@ def extract_unique_ingredients(input_path: str = "data/processed/processed_data.
     
     return unique_ingredients
 
-def validate_processed_data(input_path: str = "data/processed/processed_data.csv") -> None:
-    """Validate processed_data.csv and fix servings if needed."""
+def validate_processed_data(input_path: str = os.path.join('data', 'processed', 'processed_data.csv')) -> None:
     df = load_data(input_path)
     if df is None:
         return
     
     for idx, row in df.iterrows():
         try:
-            servings = row['servings']
-            if not isinstance(servings, int) or servings < 2:
-                ner_ingredients = eval(row['NER']) if isinstance(row['NER'], str) else row['NER']
-                quantities = eval(row['ingredient_quantities']) if isinstance(row['ingredient_quantities'], str) else row['ingredient_quantities']
-                df.at[idx, 'servings'] = estimate_servings(quantities, ner_ingredients)
+            structured_ings = eval(row['structured_ingredients']) if isinstance(row['structured_ingredients'], str) else row['structured_ingredients']
+            ner = eval(row['NER']) if isinstance(row['NER'], str) else row['NER']
+            directions = eval(row['directions']) if isinstance(row['directions'], str) else row['directions']
+            
+            recipe = Recipe(
+                title=row['title'],
+                ingredients=ner,
+                instructions=directions,
+                servings=estimate_servings(structured_ings),
+                recipe_type=classify_recipe_type(row['title'], directions),
+                structured_ingredients=structured_ings,
+                total_time_minutes=row['total_time_minutes'],
+                cooking_temp_f=row['cooking_temp_f'],
+                tier=row['tier']
+            )
+            errors = validate_recipe(recipe)
+            if errors:
                 logger = ProcessingLogger()
-                logger.log_warning("Serving fix", f"Fixed servings for recipe {idx}: {df.at[idx, 'servings']}")
+                logger.log_error("Validation error", f"Recipe {row['title']}: {errors}")
         except Exception as e:
             logger = ProcessingLogger()
             logger.log_error("Validation error", f"Failed to validate recipe {idx}: {e}")
     
-    df.to_csv(input_path, index=False)
     logger = ProcessingLogger()
-    logger.log_info(f"Validated and saved {len(df)} recipes to {input_path}")
+    logger.log_info(f"Validated {len(df)} tier 1 recipes")
