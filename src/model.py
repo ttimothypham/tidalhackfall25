@@ -5,7 +5,8 @@ import joblib
 import numpy as np
 import re
 from fractions import Fraction
-from src.utils import load_data
+from utils import load_data
+from typing import Dict
 
 def train_model(df, output_model_path='model.pkl'):
     """Train a TF-IDF model on cleaned recipes for ingredient matching."""
