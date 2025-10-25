@@ -1,0 +1,265 @@
+"""
+Gemini AI Helper Functions for Food Bank Recipe Project
+Handles recipe analysis, matching, and description generation
+"""
+
+import google.generativeai as genai
+import os
+from dotenv import load_dotenv
+import json
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Get API key from environment variable
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+
+if not GEMINI_API_KEY:
+    raise ValueError(
+        "❌ GEMINI_API_KEY not found in .env file!\n"
+        "Please create a .env file in the project root with:\n"
+        "GEMINI_API_KEY=your_actual_api_key_here"
+    )
+
+# Configure Gemini with API key
+genai.configure(api_key=GEMINI_API_KEY)
+
+# Initialize the model
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+print("✅ Gemini AI initialized successfully")
+
+
+def analyze_recipe_match(user_ingredients, recipe_data):
+    """
+    Use Gemini to analyze how well a recipe matches user's ingredients
+    
+    Args:
+        user_ingredients (list): List of ingredients the user has
+        recipe_data (dict): Recipe dictionary with 'title' and 'ingredients_list'
+    
+    Returns:
+        dict: Analysis with match_score, missing_ingredients, substitutions, explanation
+    """
+    try:
+        prompt = f"""
+You are a helpful cooking assistant for a food bank recipe recommendation system.
+
+Available ingredients: {', '.join(user_ingredients)}
+
+Recipe: {recipe_data['title']}
+Required ingredients: {', '.join(recipe_data['ingredients_list'])}
+
+Task:
+1. Rate this recipe match from 1-10 (10 = perfect match, all ingredients available)
+2. List any ingredients the user is missing
+3. For missing ingredients, suggest substitutions using common food bank items (rice, pasta, beans, canned goods, flour, sugar, oil, etc.)
+4. Write ONE encouraging sentence explaining why this recipe is a good choice
+
+Format your response EXACTLY as valid JSON (no markdown, no extra text):
+{{
+    "match_score": <number 1-10>,
+    "missing_ingredients": [<list of strings>],
+    "substitutions": {{"<missing ingredient>": "<substitute ingredient>"}},
+    "explanation": "<one sentence>"
+}}
+"""
+        
+        response = model.generate_content(prompt)
+        response_text = response.text.strip()
+        
+        # Remove markdown code blocks if present
+        if response_text.startswith('```'):
+            response_text = response_text.split('```')[1]
+            if response_text.startswith('json'):
+                response_text = response_text[4:]
+            response_text = response_text.strip()
+        
+        # Parse JSON response
+        analysis = json.loads(response_text)
+        return analysis
+        
+    except Exception as e:
+        print(f"⚠️ Error in analyze_recipe_match: {e}")
+        # Return fallback response
+        return {
+            "match_score": 5,
+            "missing_ingredients": [],
+            "substitutions": {},
+            "explanation": "This recipe uses common pantry ingredients."
+        }
+
+
+def simplify_recipe_instructions(recipe_instructions):
+    """
+    Simplify cooking instructions for beginners
+    
+    Args:
+        recipe_instructions (str): Original recipe directions
+    
+    Returns:
+        str: Simplified, beginner-friendly instructions
+    """
+    try:
+        prompt = f"""
+Rewrite these recipe instructions in simple, beginner-friendly language.
+- Use short, clear sentences
+- Explain any cooking terms (e.g., "sauté" = "cook in a pan with a little oil")
+- Break into numbered steps
+- Be encouraging and positive
+
+Original instructions:
+{recipe_instructions}
+
+Simplified version (numbered steps):
+"""
+        
+        response = model.generate_content(prompt)
+        return response.text.strip()
+        
+    except Exception as e:
+        print(f"⚠️ Error in simplify_recipe_instructions: {e}")
+        return recipe_instructions  # Return original if error
+
+
+def generate_recipe_description(recipe_data):
+    """
+    Generate appealing description for recipe card
+    
+    Args:
+        recipe_data (dict): Recipe dictionary with 'title' and 'ingredients_list'
+    
+    Returns:
+        str: 2-sentence friendly description
+    """
+    try:
+        # Get first 5 ingredients for context
+        ingredients_preview = ', '.join(recipe_data['ingredients_list'][:5])
+        
+        prompt = f"""
+Write a friendly, encouraging 2-sentence description for this recipe card.
+- First sentence: What makes this recipe good (easy, nutritious, family-friendly, etc.)
+- Second sentence: Highlight key ingredients or cooking benefit
+- Keep it positive and motivating
+- Emphasize that it uses simple, affordable ingredients
+
+Recipe: {recipe_data['title']}
+Main ingredients: {ingredients_preview}
+
+Description:
+"""
+        
+        response = model.generate_content(prompt)
+        return response.text.strip()
+        
+    except Exception as e:
+        print(f"⚠️ Error in generate_recipe_description: {e}")
+        return f"A simple recipe featuring {ingredients_preview}."
+
+
+def suggest_substitutions(missing_ingredient, available_ingredients):
+    """
+    Suggest a substitution for a missing ingredient
+    
+    Args:
+        missing_ingredient (str): The ingredient that's missing
+        available_ingredients (list): What the user has available
+    
+    Returns:
+        str: Suggested substitution
+    """
+    try:
+        prompt = f"""
+The user is missing: {missing_ingredient}
+They have available: {', '.join(available_ingredients)}
+
+Suggest ONE realistic substitution from their available ingredients, or a common food bank item (rice, pasta, beans, canned tomatoes, flour, oil, etc.).
+
+If no good substitution exists, say "Optional - can be omitted"
+
+Response (just the substitution, no extra text):
+"""
+        
+        response = model.generate_content(prompt)
+        return response.text.strip()
+        
+    except Exception as e:
+        print(f"⚠️ Error in suggest_substitutions: {e}")
+        return "No substitution available"
+
+
+def batch_analyze_recipes(user_ingredients, recipes_list, top_n=5):
+    """
+    Analyze multiple recipes at once (for efficiency)
+    
+    Args:
+        user_ingredients (list): User's available ingredients
+        recipes_list (list): List of recipe dictionaries
+        top_n (int): Number of recipes to analyze
+    
+    Returns:
+        list: Analyzed recipes with AI enhancements
+    """
+    enhanced_recipes = []
+    
+    for recipe in recipes_list[:top_n]:
+        try:
+            # Get AI analysis
+            analysis = analyze_recipe_match(user_ingredients, recipe)
+            description = generate_recipe_description(recipe)
+            
+            enhanced_recipe = {
+                'title': recipe['title'],
+                'ingredients': recipe['ingredients_list'],
+                'instructions': recipe.get('directions', 'No instructions available'),
+                'match_score': analysis['match_score'],
+                'missing_ingredients': analysis['missing_ingredients'],
+                'substitutions': analysis['substitutions'],
+                'explanation': analysis['explanation'],
+                'description': description
+            }
+            
+            enhanced_recipes.append(enhanced_recipe)
+            
+        except Exception as e:
+            print(f"⚠️ Error analyzing recipe '{recipe['title']}': {e}")
+            continue
+    
+    # Sort by match score
+    enhanced_recipes.sort(key=lambda x: x['match_score'], reverse=True)
+    
+    return enhanced_recipes
+
+
+# Test function
+def test_gemini_connection():
+    """
+    Test if Gemini API is working
+    """
+    try:
+        test_prompt = "Say 'Hello from Gemini!' if you can read this."
+        response = model.generate_content(test_prompt)
+        print(f"✅ Gemini API Test Successful!")
+        print(f"Response: {response.text}")
+        return True
+    except Exception as e:
+        print(f"❌ Gemini API Test Failed: {e}")
+        return False
+
+
+if __name__ == "__main__":
+    # Run test when file is executed directly
+    print("\n🧪 Testing Gemini API connection...")
+    test_gemini_connection()
+    
+    # Example usage
+    print("\n📝 Example: Recipe Analysis")
+    test_ingredients = ["rice", "beans", "tomato sauce", "onion"]
+    test_recipe = {
+        'title': 'Simple Rice and Beans',
+        'ingredients_list': ['rice', 'beans', 'tomato sauce', 'onion', 'garlic']
+    }
+    
+    result = analyze_recipe_match(test_ingredients, test_recipe)
+    print(f"\nAnalysis Result:")
+    print(json.dumps(result, indent=2))
