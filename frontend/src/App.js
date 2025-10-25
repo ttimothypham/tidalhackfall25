@@ -12,10 +12,51 @@ export default function MultiSelectWithSearch() {
   const dropdownRef = useRef(null);
 
   const allItems = [
-    'Rice', 'Pasta', 'Beans', 'Lentils', 'Chickpeas',
-    'Tomato Sauce', 'Canned Tomatoes', 'Flour', 'Sugar', 'Salt',
-    'Pepper', 'Oil', 'Olive Oil', 'Onion', 'Garlic',
-    'Potato', 'Carrot', 'Canned Corn', 'Canned Peas', 'Oats'
+  // Grains & Starches
+  'Rice', 'White Rice', 'Brown Rice', 'Pasta', 'Spaghetti', 'Macaroni', 
+  'Noodles', 'Flour', 'All-Purpose Flour', 'Bread', 'Cornmeal', 'Oats',
+  'Rolled Oats', 'Quinoa', 'Couscous', 'Barley',
+  
+  // Proteins
+  'Beans', 'Black Beans', 'Kidney Beans', 'Pinto Beans', 'Navy Beans',
+  'Lentils', 'Red Lentils', 'Green Lentils', 'Chickpeas', 'Split Peas',
+  'Canned Chicken', 'Canned Tuna',
+  
+  // Vegetables (Canned/Shelf-Stable)
+  'Tomato Sauce', 'Tomato Paste', 'Canned Tomatoes', 'Diced Tomatoes',
+  'Crushed Tomatoes', 'Canned Corn', 'Canned Peas', 'Canned Green Beans',
+  'Canned Carrots', 'Canned Beets', 'Canned Mushrooms',
+  
+  // Fresh Vegetables (Long Shelf Life)
+  'Onion', 'Garlic', 'Potato', 'Sweet Potato', 'Carrot', 'Cabbage',
+  'Bell Pepper', 'Celery',
+  
+  // Oils & Fats
+  'Oil', 'Vegetable Oil', 'Olive Oil', 'Canola Oil', 'Cooking Spray',
+  
+  // Seasonings & Basics
+  'Salt', 'Black Pepper', 'Pepper', 'Sugar', 'Brown Sugar', 'Honey',
+  'Vinegar', 'White Vinegar', 'Apple Cider Vinegar', 'Soy Sauce',
+  'Hot Sauce', 'Ketchup', 'Mustard',
+  
+  // Spices & Herbs (Dried)
+  'Cumin', 'Chili Powder', 'Paprika', 'Oregano', 'Basil', 'Thyme',
+  'Garlic Powder', 'Onion Powder', 'Cinnamon', 'Italian Seasoning',
+  'Bay Leaves', 'Curry Powder', 'Red Pepper Flakes',
+  
+  // Canned Fruits
+  'Canned Peaches', 'Canned Pears', 'Canned Pineapple', 'Applesauce',
+  'Raisins', 'Dried Cranberries',
+  
+  // Baking Essentials
+  'Baking Powder', 'Baking Soda', 'Vanilla Extract', 'Cornstarch',
+  
+  // Broths & Soups
+  'Chicken Broth', 'Vegetable Broth', 'Beef Broth', 'Bouillon Cubes',
+  
+  // Miscellaneous
+  'Rice Vinegar', 'Worcestershire Sauce', 'Molasses', 'Jam', 'Jelly',
+  'Peanut Butter Alternative', 'Sunflower Seed Butter', 'Crackers'
   ];
 
   const filteredItems = allItems.filter(item =>
@@ -56,7 +97,9 @@ export default function MultiSelectWithSearch() {
     setRecipes([]);
 
     try {
-      const response = await fetch(' http://127.0.0.1:5000/recommend', {
+      console.log('Sending request with ingredients:', selectedItems);
+      
+      const response = await fetch('http://127.0.0.1:5000/api/recommend', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -67,19 +110,24 @@ export default function MultiSelectWithSearch() {
         })
       });
 
+      console.log('Response status:', response.status);
+
       if (!response.ok) {
-        throw new Error(`API Error: ${response.status}`);
+        const errorData = await response.json();
+        throw new Error(errorData.error || `API Error: ${response.status}`);
       }
 
       const data = await response.json();
+      console.log('Received data:', data);
+      
       setRecipes(data.recommendations || []);
       
       if (data.recommendations && data.recommendations.length === 0) {
-        setError('No recipes found with those ingredients. Try adding more items!');
+        setError('No recipes found with those ingredients. Try adding more common items like Rice, Beans, or Pasta!');
       }
     } catch (err) {
       console.error('Error fetching recipes:', err);
-      setError('Failed to connect to recipe API. Make sure the Flask server is running on port 5000.');
+      setError(`Failed to get recipes: ${err.message}. Make sure Flask server is running on port 5000.`);
     } finally {
       setLoading(false);
     }
@@ -329,7 +377,7 @@ export default function MultiSelectWithSearch() {
           {recipes.length > 0 && (
             <div style={{ marginTop: '2rem' }}>
               <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#1f2937', marginBottom: '1rem' }}>
-                Found {recipes.length} Recipe{recipes.length !== 1 ? 's' : ''}
+                Found {recipes.length} Recipe{recipes.length !== 1 ? 's' : ''}! 🎉
               </h2>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 {recipes.map((recipe, index) => (
@@ -356,8 +404,8 @@ export default function MultiSelectWithSearch() {
                         {recipe.title}
                       </h3>
                       <span style={{
-                        background: '#e0e7ff',
-                        color: '#4338ca',
+                        background: '#dcfce7',
+                        color: '#166534',
                         padding: '0.25rem 0.75rem',
                         borderRadius: '9999px',
                         fontSize: '0.875rem',
@@ -365,26 +413,42 @@ export default function MultiSelectWithSearch() {
                         whiteSpace: 'nowrap',
                         marginLeft: '1rem'
                       }}>
-                        {recipe.match_score} matches
+                        ✓ {recipe.match_score} match{recipe.match_score !== 1 ? 'es' : ''}
                       </span>
                     </div>
                     
                     <div style={{ marginBottom: '1rem' }}>
                       <p style={{ fontSize: '0.875rem', fontWeight: '600', color: '#374151', marginBottom: '0.5rem' }}>
-                        Ingredients:
+                        📝 Ingredients:
                       </p>
-                      <p style={{ fontSize: '0.875rem', color: '#6b7280', lineHeight: '1.5' }}>
+                      <div style={{ 
+                        fontSize: '0.875rem', 
+                        color: '#6b7280', 
+                        lineHeight: '1.5',
+                        background: 'white',
+                        padding: '0.75rem',
+                        borderRadius: '0.5rem',
+                        border: '1px solid #e5e7eb'
+                      }}>
                         {recipe.ingredients}
-                      </p>
+                      </div>
                     </div>
 
                     <div>
                       <p style={{ fontSize: '0.875rem', fontWeight: '600', color: '#374151', marginBottom: '0.5rem' }}>
-                        Directions:
+                        👨‍🍳 Directions:
                       </p>
-                      <p style={{ fontSize: '0.875rem', color: '#6b7280', lineHeight: '1.6' }}>
+                      <div style={{ 
+                        fontSize: '0.875rem', 
+                        color: '#6b7280', 
+                        lineHeight: '1.6',
+                        background: 'white',
+                        padding: '0.75rem',
+                        borderRadius: '0.5rem',
+                        border: '1px solid #e5e7eb'
+                      }}>
                         {recipe.directions}
-                      </p>
+                      </div>
                     </div>
                   </div>
                 ))}
