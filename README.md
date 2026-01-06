@@ -11,4 +11,4 @@ Data Processing: Pandas on RecipeNLG
 AI: Gemini 1.5 Flash for intelligent analysis
 
 ## Demo
-https://www.youtube.com/watch?v=UYZ56gWEyfM
+https://github.com/user-attachments/assets/92fea968-c8b1-401a-abb7-6389178e9491
